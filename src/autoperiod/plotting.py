@@ -1,60 +1,85 @@
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 class Plotter:
-
-    def __init__(self, title="Autoperiod", filename=None, figsize=(20, 20), verbose=False):
+    def __init__(self, title="Autoperiod", figsize=(16, 12)):
+        self.fig = plt.figure(figsize=figsize)
         self.title = title
-        self.filename = filename
-        self.fig = plt.figure()
-        self.figsize = figsize
-        self.verbose = verbose
+        self._setup_axes()
 
-        self.timeseries_ax = plt.subplot2grid((3, 10), (0, 0), colspan=9, xlabel='Times', ylabel='Values')
+    def _setup_axes(self):
+        self.timeseries_ax = plt.subplot2grid((3, 3), (0, 0), colspan=3)
+        self.periodogram_ax = plt.subplot2grid((3, 3), (1, 0), colspan=3)
+        self.acf_ax = plt.subplot2grid((3, 3), (2, 0), colspan=2)
+        self.phase_ax = plt.subplot2grid((3, 3), (2, 2))
 
-        self.area_ratio_ax = plt.subplot2grid((3, 10), (0, 9), colspan=1, xticks=(1, 2), xticklabels=("on", "off"))
-        self.area_ratio_ax.get_yaxis().set_visible(False)
+        self.timeseries_ax.set(xlabel='Time', ylabel='Value', title='Time Series')
+        self.periodogram_ax.set(xlabel='Period', ylabel='Power',
+                                xscale='log', title='Periodogram')
+        self.acf_ax.set(xlabel='Lag', ylabel='ACF', title='Autocorrelation')
+        self.phase_ax.set(xlabel='Phase', ylabel='Value',
+                          xticks=[0, 0.5, 1], title='Phase Folded')
 
-        self.periodogram_ax = plt.subplot2grid((3, 10), (1, 0), colspan=10, xlabel='Period', ylabel='Power')
+    def _plot_acf(self, ap):
+        self.acf_ax.clear()
+        self.acf_ax.plot(ap.lags, ap.acf, 'b-', label='ACF')
 
-        self.acf_ax = plt.subplot2grid((3, 10), (2, 0), colspan=10, xlabel='Lag', ylabel='Correlation')
+        if ap.period:
+            expected_lag = ap.period / ap.median_interval
+            self.acf_ax.axvline(expected_lag, color='r', linestyle='--',
+                                label=f'Expected Lag ({expected_lag:.1f})')
 
-    def plot_timeseries(self, times, values):
-        self.timeseries_ax.plot(times, values, label='Timeseries')
+            peak_mask = ap.acf > np.quantile(ap.acf, 0.95)
+            self.acf_ax.scatter(ap.lags[peak_mask], ap.acf[peak_mask],
+                                color='orange', edgecolor='k', zorder=10,
+                                label='Significant Peaks')
+
+        self.acf_ax.legend()
+        self.acf_ax.set_xlim(0, ap.lags[-1])
+
+    def plot_results(self, autoperiod):
+
+        self._plot_timeseries(autoperiod)
+
+        self._plot_periodogram(autoperiod)
+
+        self._plot_acf(autoperiod)
+
+        if autoperiod.period:
+            self._plot_phase_folded(autoperiod)
+
+        plt.tight_layout()
+
+    def _plot_timeseries(self, ap):
+        self.timeseries_ax.plot(ap.times, ap.values, 'k.',
+                                alpha=0.5, label='Data')
+        if ap.period:
+            self.timeseries_ax.plot(ap.times, ap.sinwave, 'r-',
+                                    label=f'Periodic Model ({ap.period:.2f})')
         self.timeseries_ax.legend()
 
-    def plot_sinwave(self, times, sinwave):
-        self.timeseries_ax.plot(times, sinwave, label='Estimated Period')
-        self.timeseries_ax.legend()
+    def _plot_periodogram(self, ap):
+        self.periodogram_ax.plot(ap.periods, ap.normalized_powers, 'b-')
+        self.periodogram_ax.axhline(ap._power_threshold, color='r', linestyle='--',
+                                    label=f'Threshold (p={ap.confidence_level})')
+        self.periodogram_ax.axvline(ap.max_period_threshold, color='g', linestyle=':',
+                                    label='Max Period Limit')
 
-    def plot_area_ratio(self, on_period_area, off_period_area):
-        self.area_ratio_ax.bar(1, on_period_area)
-        self.area_ratio_ax.bar(2, off_period_area)
-        self.area_ratio_ax.legend()
-
-    def plot_periodogram(self, periods, powers, hints, power_threshold, time_threshold):
-        self.periodogram_ax.plot(periods, powers, label='Periodogram')
-        self.periodogram_ax.scatter([p for i, p in hints], [powers[i] for i, p in hints], c='red', marker='x', label='Period Hints')
-        self.periodogram_ax.axhline(power_threshold, color='green', linewidth=1, linestyle='dashed', label='Min Power')
-        self.periodogram_ax.axvline(time_threshold, c='purple', linewidth=1, linestyle='dashed', label='Max Period')
+        if ap._period_hints:
+            for p in ap._period_hints:
+                self.periodogram_ax.axvline(p, color='orange', alpha=0.5)
         self.periodogram_ax.legend()
 
-    def plot_acf(self, times, acf):
-        self.acf_ax.plot(times, acf, '-o', lw=0.5, ms=2, label='Autocorrelation')
-        self.acf_ax.legend()
+    def _plot_phase_folded(self, ap):
+        if ap.sinwave is None:
+            return
+        phase = (ap.times % ap.period) / ap.period
+        self.phase_ax.plot(phase, ap.values, 'k.', alpha=0.3)
+        self.phase_ax.plot(np.sort(phase), ap.sinwave[np.argsort(phase)], 'r-')
 
-    def plot_acf_validation(self, times, acf, times1, m1, c1, err1, times2, m2, c2, err2, split_idx, peak_idx):
-        self.acf_ax.plot(times1, c1 + m1 * times1, c='r', label='Slope: {}, Error: {}'.format(m1, err1))
-        self.acf_ax.plot(times2, c2 + m2 * times2, c='r', label='Slope: {}, Error: {}'.format(m2, err2))
-        self.acf_ax.scatter(times[split_idx], acf[split_idx], c='y', label='Split point: {}'.format(times[split_idx]))
-        self.acf_ax.scatter(times[peak_idx], acf[peak_idx], c='g', label='Peak point: {}'.format(times[peak_idx]))
-        self.acf_ax.legend()
+    def save(self, filename):
+        self.fig.savefig(filename, bbox_inches='tight')
 
     def show(self):
-
-        self.fig.tight_layout()
-
-        if self.filename:
-            self.fig.set_size_inches(*self.figsize)
-            self.fig.savefig(self.filename, format='pdf', facecolor=self.fig.get_facecolor())
         plt.show()
